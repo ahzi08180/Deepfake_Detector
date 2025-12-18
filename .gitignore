@@ -1,0 +1,39 @@
+# --- 資料集 (非常重要，絕對不要推送到 GitHub) ---
+rvf10k/
+data/
+datasets/
+*.zip
+*.tar.gz
+
+# --- Python 環境與暫存 ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+build/
+dist/
+*.egg-info/
+
+# --- 模型權重檔案 ---
+# 如果你的 .pth 檔案小於 100MB，可以考慮推送（Streamlit 部署需要）
+# 如果大於 100MB，建議取消註解下面這行，改用下載連結方式
+# *.pth
+# *.h5
+# *.ckpt
+
+# --- 作業系統暫存 ---
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints/
+
+# --- Streamlit 暫存 ---
+.streamlit/config.toml
+
+# 排除大型資料夾與 CSV 原始檔
+rvf10k/
+*.csv
+*.zip
+__pycache__/

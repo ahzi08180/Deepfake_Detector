@@ -1,8 +1,7 @@
 torch
 torchvision
-timm
-facenet-pytorch
 streamlit
 Pillow
+facenet-pytorch
 opencv-python-headless
-numpy
+pandas  <-- 新增這行

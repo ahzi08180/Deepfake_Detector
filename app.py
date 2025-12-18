@@ -1,86 +1,63 @@
 import streamlit as st
 import torch
 import torch.nn as nn
-from torchvision import transforms, models
+from torchvision import models, transforms
 from PIL import Image
-import numpy as np
+import os
 
-# =====================
-# Config
-# =====================
-IMG_SIZE = 300
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-MODEL_PATH = "deepfake_rvf10k.pth"
+# --- 頁面設定 ---
+st.set_page_config(page_title="Deepfake Detector", layout="centered")
+st.title("🛡️ Deepfake 影像辨識系統")
 
-st.set_page_config(page_title="Deepfake Image Detector")
-st.title("🧠 Deepfake vs Real Image Detector")
+# --- 載入模型函式 ---
+@st.cache_resource
+def load_trained_model():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = models.resnet18(pretrained=False)
+    model.fc = nn.Linear(model.fc.in_features, 2)
+    
+    # 載入你訓練好的權重
+    if os.path.exists("rvf10k_model.pth"):
+        model.load_state_dict(torch.load("rvf10k_model.pth", map_location=device))
+        st.sidebar.success("✅ 成功載入自定義訓練權重")
+    else:
+        st.sidebar.warning("⚠️ 找不到權重檔，將使用隨機初始權重 (僅供測試介面用)")
+        
+    model.to(device)
+    model.eval()
+    return model, device
 
-# =====================
-# Transform (一定要和 training 一樣)
-# =====================
+model, device = load_trained_model()
+
+# --- 預處理 ---
 transform = transforms.Compose([
-    transforms.Resize((IMG_SIZE, IMG_SIZE)),
+    transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(
-        mean=[0.485, 0.456, 0.406],
-        std=[0.229, 0.224, 0.225]
-    )
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-# =====================
-# Load Model
-# =====================
-@st.cache_resource
-def load_model():
-    model = models.efficientnet_b3(weights=None)
-
-    in_features = model.classifier[1].in_features
-    model.classifier[1] = nn.Sequential(
-        nn.Linear(in_features, 256),
-        nn.BatchNorm1d(256),
-        nn.ReLU(),
-        nn.Dropout(0.4),
-        nn.Linear(256, 1)
-    )
-
-    state = torch.load(MODEL_PATH, map_location=DEVICE)
-    model.load_state_dict(state)
-    model.to(DEVICE)
-    model.eval()
-    return model
-
-model = load_model()
-
-# =====================
-# UI
-# =====================
-uploaded_file = st.file_uploader(
-    "📤 Upload a face image",
-    type=["jpg", "jpeg", "png"]
-)
+# --- UI 介面 ---
+uploaded_file = st.file_uploader("請上傳一張人臉照片...", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
-    image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded Image", use_container_width=True)
-
-    x = transform(image).unsqueeze(0).to(DEVICE)
-
-    with torch.no_grad():
-        logit = model(x).squeeze()
-        prob_fake = torch.sigmoid(logit).item()
-        prob_real = 1 - prob_fake
-
-    # =====================
-    # Result
-    # =====================
-    st.subheader("🔍 Prediction Result")
-
-    if prob_fake >= 0.5:
-        st.error(f"🟥 FAKE ({prob_fake*100:.2f}%)")
-    else:
-        st.success(f"🟩 REAL ({prob_real*100:.2f}%)")
-
-    st.markdown("### 📊 Confidence")
-    st.progress(int(prob_fake * 100))
-    st.write(f"Fake Probability: **{prob_fake:.4f}**")
-    st.write(f"Real Probability: **{prob_real:.4f}**")
+    img = Image.open(uploaded_file).convert('RGB')
+    st.image(img, caption='待測圖片', use_container_width=True)
+    
+    if st.button("執行偵測"):
+        img_tensor = transform(img).unsqueeze(0).to(device)
+        with torch.no_grad():
+            outputs = model(img_tensor)
+            probs = torch.nn.functional.softmax(outputs, dim=1)
+            # 根據你的 CSV: Index 0=Fake, Index 1=Real
+            fake_prob = probs[0][0].item()
+            real_prob = probs[0][1].item()
+        
+        st.divider()
+        if real_prob > fake_prob:
+            st.success(f"結果：這是一張【真實】照片")
+            st.progress(real_prob)
+            st.write(f"真實度信心：{real_prob*100:.2f}%")
+        else:
+            st.error(f"結果：🚨 疑似為【Deepfake】偽造照片")
+            st.progress(fake_prob)
+            st.write(f"偽造度信心：{fake_prob*100:.2f}%")
