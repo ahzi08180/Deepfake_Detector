@@ -4,4 +4,4 @@ streamlit
 Pillow
 facenet-pytorch
 opencv-python-headless
-pandas  <-- 新增這行
+pandas

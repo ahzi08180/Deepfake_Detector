@@ -103,11 +103,14 @@ with torch.no_grad():
 # 印出 Classification Report
 # 根據你的 CSV: 0 是 Fake, 1 是 Real
 target_names = ['Fake (0)', 'Real (1)']
-print("\n📝 Classification Report:")
+print("\n\n📝 Classification Report:")
 print(classification_report(all_labels, all_preds, target_names=target_names))
 
 # 繪製 Confusion Matrix
 cm = confusion_matrix(all_labels, all_preds)
+print("\n\n混淆矩陣:")
+print(cm)
+
 plt.figure(figsize=(8, 6))
 sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=target_names, yticklabels=target_names)
 plt.xlabel('Predicted')
