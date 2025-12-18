@@ -21,3 +21,18 @@
 建議使用 Python 3.10+。
 ```bash
 pip install -r requirements.txt
+```
+
+### 2. 執行網頁程式
+```bash
+streamlit run app.py
+```
+
+## 📂 檔案結構
+* **app.py**: Streamlit 網頁主程式。
+
+* **train.py**: 模型訓練與評估腳本。
+
+* **rvf10k_model.pth**: 訓練完成的模型權重檔。
+
+* **requirements.txt**: 必要 Python 套件清單。
