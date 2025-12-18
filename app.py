@@ -96,10 +96,10 @@ if uploaded_file:
     # --- UI 顯示 ---
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.image(img_draw, caption="偵測到的人臉 & Bounding Box", use_container_width=True)
+        st.image(img_draw, caption="偵測到的人臉 & Bounding Box", width='stretch')
     with col2:
         fft_viz = fft_tensor.squeeze().cpu().numpy()
-        st.image(fft_viz, caption="FFT 頻譜 (AI 偽影偵測)", clamp=True, use_container_width=True)
+        st.image(fft_viz, caption="FFT 頻譜 (AI 偽影偵測)", clamp=True, width='stretch')
     with col3:
         st.metric("🟥 偽造機率", f"{fake_prob*100:.2f}%")
         st.metric("🟩 真實機率", f"{real_prob*100:.2f}%")
