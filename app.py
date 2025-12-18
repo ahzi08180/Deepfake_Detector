@@ -35,8 +35,13 @@ def process_fft(face_pil):
     f = np.fft.fft2(img_gray)
     fshift = np.fft.fftshift(f)
     magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
-    magnitude_spectrum = cv2.normalize(magnitude_spectrum, None, 0, 1, cv2.NORM_MINMAX)
-    return torch.from_numpy(magnitude_spectrum).float().unsqueeze(0)
+    
+    # 修改這裡：確保正規化後轉為 0-255 的 uint8 整數
+    magnitude_spectrum = cv2.normalize(magnitude_spectrum, None, 0, 255, cv2.NORM_MINMAX)
+    magnitude_spectrum_uint8 = magnitude_spectrum.astype(np.uint8)
+    
+    # 回傳給模型用的依然要是 0-1 的 float tensor
+    return torch.from_numpy(magnitude_spectrum / 255.0).float().unsqueeze(0)
 
 uploaded_file = st.file_uploader("上傳照片進行頻域分析...", type=["jpg", "png", "jpeg"])
 
