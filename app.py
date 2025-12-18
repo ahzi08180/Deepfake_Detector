@@ -18,9 +18,21 @@ def load_all():
     
     # 初始化 EfficientNet-B0
     model = models.efficientnet_b0(weights=None)
+
+    # === 對齊 train.py：4 channel input ===
     old_conv = model.features[0][0]
-    model.features[0][0] = nn.Conv2d(4, old_conv.out_channels, kernel_size=old_conv.kernel_size,
-                                     stride=old_conv.stride, padding=old_conv.padding, bias=False)
+    model.features[0][0] = nn.Conv2d(
+        4,
+        old_conv.out_channels,
+        kernel_size=old_conv.kernel_size,
+        stride=old_conv.stride,
+        padding=old_conv.padding,
+        bias=False
+    )
+
+    # === ⭐ 關鍵：對齊 train.py 的 classifier ===
+    model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
+
     # 載入訓練好的權重
     model_path = "rvf10k_efficientnetb0.pth"
     if os.path.exists(model_path):
