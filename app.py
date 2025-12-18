@@ -44,7 +44,13 @@ if uploaded_file:
     img = Image.open(uploaded_file).convert('RGB')
     
     if st.button("開始深度檢測"):
-        face = mtcnn(img) # 這裡得到的是 [3, 224, 224] 的 Tensor
+        face = mtcnn(img)
+
+        if face is None:
+            st.error("❌ 未偵測到人臉，Deepfake 分析需包含清楚人臉。")
+            st.info("👉 建議：正面、單人、臉部佔畫面 30% 以上")
+            st.stop()
+
         face = torch.clamp(face, 0, 1)
         
         if face is not None:
