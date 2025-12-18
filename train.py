@@ -3,87 +3,128 @@ import torch.nn as nn
 import torch.optim as optim
 import pandas as pd
 import os
-import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np
+import cv2
 from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, models
 from tqdm import tqdm
 from sklearn.metrics import classification_report, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-# --- 1. 設定 ---
-DATA_ROOT = "./rvf10k" 
-BATCH_SIZE = 32
-EPOCHS = 5
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# --- 1. FFT 處理函式 ---
+def get_fft_spectrum(img_pil):
+    """提取圖片的 FFT 頻譜特徵並轉為 Tensor"""
+    # 轉灰階並轉為 numpy
+    img_gray = np.array(img_pil.convert('L'))
+    # 執行 FFT
+    f = np.fft.fft2(img_gray)
+    fshift = np.fft.fftshift(f)
+    # 取振幅譜並進行對數變換
+    magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
+    # 標準化到 0-1
+    magnitude_spectrum = cv2.normalize(magnitude_spectrum, None, 0, 1, cv2.NORM_MINMAX)
+    # 轉回 Tensor 並調整尺寸
+    fft_tensor = torch.from_numpy(magnitude_spectrum).float().unsqueeze(0) # [1, H, W]
+    return fft_tensor
 
-# --- 2. 自定義 Dataset ---
-class RVFDataset(Dataset):
+# --- 2. 自定義 Dataset (雙流版) ---
+class RVFDatasetFFT(Dataset):
     def __init__(self, csv_file, root_dir, transform=None):
         self.data = pd.read_csv(csv_file)
         self.root_dir = root_dir
         self.transform = transform
+        self.to_tensor = transforms.ToTensor()
+
     def __len__(self):
         return len(self.data)
+
     def __getitem__(self, idx):
         img_rel_path = str(self.data.loc[idx, 'path'])
         img_path = os.path.join(self.root_dir, img_rel_path)
         label = int(self.data.loc[idx, 'label'])
-        image = Image.open(img_path).convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-        return image, label
 
-# --- 3. 數據準備 ---
-transform = transforms.Compose([
+        # 1. 讀圖
+        image_pil = Image.open(img_path).convert("RGB")
+
+        # 2. 先 Resize（關鍵）
+        image_pil = transforms.Resize((224, 224))(image_pil)
+
+        # 3. FFT（從 resize 後、未 normalize 的圖）
+        fft_feature = get_fft_spectrum(image_pil)   # [1,224,224]
+
+        # 4. RGB transform（ToTensor + Normalize）
+        if self.transform:
+            image = self.transform(image_pil)       # [3,224,224]
+        else:
+            image = transforms.ToTensor()(image_pil)
+
+        # 5. 拼接 RGB + FFT
+        combined_input = torch.cat((image, fft_feature), dim=0)  # [4,224,224]
+
+        return combined_input, label
+
+
+# --- 3. 設定與準備 ---
+DATA_ROOT = "./rvf10k"
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+BATCH_SIZE = 32
+
+train_transform = transforms.Compose([
+    transforms.Resize((224, 224)),
+    transforms.RandomHorizontalFlip(),
+    transforms.ColorJitter(0.2, 0.2, 0.2),
+    transforms.GaussianBlur(3, sigma=(0.1, 2.0)),
+    transforms.ToTensor(),
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+])
+
+valid_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
     transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
-train_loader = DataLoader(RVFDataset(os.path.join(DATA_ROOT, "train.csv"), DATA_ROOT, transform), batch_size=BATCH_SIZE, shuffle=True)
-valid_loader = DataLoader(RVFDataset(os.path.join(DATA_ROOT, "valid.csv"), DATA_ROOT, transform), batch_size=BATCH_SIZE)
+train_loader = DataLoader(RVFDatasetFFT(os.path.join(DATA_ROOT, "train.csv"), DATA_ROOT, train_transform), batch_size=BATCH_SIZE, shuffle=True)
+valid_loader = DataLoader(RVFDatasetFFT(os.path.join(DATA_ROOT, "valid.csv"), DATA_ROOT, valid_transform), batch_size=BATCH_SIZE)
 
-# --- 4. 模型與優化器 ---
+# --- 4. 修改模型以接收 4 通道 (RGB + FFT) ---
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
-model.fc = nn.Linear(model.fc.in_features, 2) 
+# 修改第一層卷積
+old_conv = model.conv1
+model.conv1 = nn.Conv2d(4, old_conv.out_channels, kernel_size=old_conv.kernel_size, 
+                        stride=old_conv.stride, padding=old_conv.padding, bias=False)
+# 將原有的權重複製給前 3 個通道，第 4 通道初始化
+with torch.no_grad():
+    model.conv1.weight[:, :3, :, :] = old_conv.weight
+    model.conv1.weight[:, 3, :, :] = torch.mean(old_conv.weight, dim=1)
+
+model.fc = nn.Linear(model.fc.in_features, 2)
 model = model.to(DEVICE)
 
+optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-# --- 5. 訓練與評估迴圈 ---
-print(f"🚀 開始訓練，使用設備: {DEVICE}")
+# --- 5. 訓練迴圈 (同前，略縮) ---
+EPOCHS = 1
+print(f"🚀 開始 FFT+RGB 雙流訓練...")
+print(f"🚀 訓練設備: {DEVICE}")
+print(f"🚀 訓練樣本數: {len(train_loader.dataset)}")
+print(f"🚀 驗證樣本數: {len(valid_loader.dataset)}")
+print(f"🚀 批次大小: {BATCH_SIZE}")
+print(f"🚀 總訓練輪數: {EPOCHS}")
 
 for epoch in range(EPOCHS):
     model.train()
-    running_loss = 0.0
-    correct = 0
-    total = 0
-    
-    train_pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS}")
-    
-    for images, labels in train_pbar:
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-        
+    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}")
+    for imgs, lbls in pbar:
+        imgs, lbls = imgs.to(DEVICE), lbls.to(DEVICE)
         optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
+        loss = criterion(model(imgs), lbls)
         loss.backward()
         optimizer.step()
-        
-        running_loss += loss.item()
-        
-        # 計算準確率
-        _, predicted = torch.max(outputs.data, 1)
-        total += labels.size(0)
-        correct += (predicted == labels).sum().item()
-        current_acc = 100 * correct / total
-        
-        train_pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{current_acc:.2f}%"})
-
-    avg_loss = running_loss / len(train_loader)
-    print(f"✨ Epoch {epoch+1} 完成! 平均 Loss: {avg_loss:.4f}")
+        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
 # --- 6. 最終評估 (Classification Report & Confusion Matrix) ---
 
@@ -120,3 +161,4 @@ plt.savefig('confusion_matrix.png')
 print("✅ 混淆矩陣已儲存為 confusion_matrix.png")
 
 torch.save(model.state_dict(), "rvf10k_model.pth")
+print("✅ 模型已儲存。")

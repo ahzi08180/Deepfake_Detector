@@ -3,61 +3,85 @@ import torch
 import torch.nn as nn
 from torchvision import models, transforms
 from PIL import Image
-import os
+from facenet_pytorch import MTCNN
+import numpy as np
+import cv2
 
-# --- 頁面設定 ---
-st.set_page_config(page_title="Deepfake Detector", layout="centered")
-st.title("🛡️ Deepfake 影像辨識系統")
+st.set_page_config(page_title="FFT Deepfake Detector", layout="wide")
+st.title("🛡️ 頻域分析 Deepfake 偵測系統 (FFT + RGB)")
 
-# --- 載入模型函式 ---
 @st.cache_resource
-def load_trained_model():
+def load_all():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = models.resnet18(pretrained=False)
+    mtcnn = MTCNN(image_size=224, margin=20, device=device)
+    
+    # 初始化 4 通道 ResNet18
+    model = models.resnet18(weights=None)
+    model.conv1 = nn.Conv2d(4, 64, kernel_size=7, stride=2, padding=3, bias=False)
     model.fc = nn.Linear(model.fc.in_features, 2)
     
-    # 載入你訓練好的權重
-    if os.path.exists("rvf10k_model.pth"):
-        model.load_state_dict(torch.load("rvf10k_model.pth", map_location=device))
-        st.sidebar.success("✅ 成功載入自定義訓練權重")
+    if torch.cuda.is_available():
+        model.load_state_dict(torch.load("rvf10k_fft_model.pth"))
     else:
-        st.sidebar.warning("⚠️ 找不到權重檔，將使用隨機初始權重 (僅供測試介面用)")
-        
-    model.to(device)
-    model.eval()
-    return model, device
+        model.load_state_dict(torch.load("rvf10k_fft_model.pth", map_location='cpu'))
+    
+    model.to(device).eval()
+    return mtcnn, model, device
 
-model, device = load_trained_model()
+mtcnn, model, device = load_all()
 
-# --- 預處理 ---
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),
-    transforms.ToTensor(),
-    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-])
+def process_fft(face_pil):
+    img_gray = np.array(face_pil.convert('L'))
+    f = np.fft.fft2(img_gray)
+    fshift = np.fft.fftshift(f)
+    magnitude_spectrum = 20 * np.log(np.abs(fshift) + 1)
+    magnitude_spectrum = cv2.normalize(magnitude_spectrum, None, 0, 1, cv2.NORM_MINMAX)
+    return torch.from_numpy(magnitude_spectrum).float().unsqueeze(0)
 
-# --- UI 介面 ---
-uploaded_file = st.file_uploader("請上傳一張人臉照片...", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader("上傳照片進行頻域分析...", type=["jpg", "png", "jpeg"])
 
 if uploaded_file:
     img = Image.open(uploaded_file).convert('RGB')
-    st.image(img, caption='待測圖片', use_container_width=True)
     
-    if st.button("執行偵測"):
-        img_tensor = transform(img).unsqueeze(0).to(device)
-        with torch.no_grad():
-            outputs = model(img_tensor)
-            probs = torch.nn.functional.softmax(outputs, dim=1)
-            # 根據你的 CSV: Index 0=Fake, Index 1=Real
-            fake_prob = probs[0][0].item()
-            real_prob = probs[0][1].item()
+    if st.button("開始深度檢測"):
+        face = mtcnn(img) # 這裡得到的是 [3, 224, 224] 的 Tensor
+        face = torch.clamp(face, 0, 1)
         
-        st.divider()
-        if real_prob > fake_prob:
-            st.success(f"結果：這是一張【真實】照片")
-            st.progress(real_prob)
-            st.write(f"真實度信心：{real_prob*100:.2f}%")
+        if face is not None:
+            # 1. 準備空域 Tensor (需要 Normalize)
+            normalize = transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            rgb_tensor = normalize(face)
+            
+            # 2. 準備頻域 Tensor
+            face_pil = transforms.ToPILImage()(face)
+            fft_tensor = process_fft(face_pil).to(device)
+            
+            # 3. 合併為 4 通道
+            input_tensor = torch.cat((rgb_tensor, fft_tensor), dim=0).unsqueeze(0).to(device)
+            
+            with torch.no_grad():
+                output = model(input_tensor)
+                prob = torch.softmax(output, dim=1)[0]
+            
+            # UI 顯示
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.image(img, caption="原始圖")
+            with col2:
+                # 顯示 FFT 頻譜圖供視覺化參考
+                fft_viz = fft_tensor.squeeze().cpu().numpy()
+                st.image(fft_viz, caption="FFT 頻譜 (AI 偽影偵測)")
+            with col3:
+                fake_prob = prob[0].item()
+                real_prob = prob[1].item()
+
+                st.metric("🟥 偽造機率", f"{fake_prob*100:.2f}%")
+                st.metric("🟩 真實機率", f"{real_prob*100:.2f}%")
+
+                if fake_prob > real_prob:
+                    st.error("🚨 判定為 AI 生成 (Deepfake)")
+                else:
+                    st.success("✅ 判定為真實人臉")
+
         else:
-            st.error(f"結果：🚨 疑似為【Deepfake】偽造照片")
-            st.progress(fake_prob)
-            st.write(f"偽造度信心：{fake_prob*100:.2f}%")
+            st.warning("偵測不到人臉。")
