@@ -43,6 +43,11 @@ class RVFDatasetFFT(Dataset):
 
         # FFT
         fft_feature = get_fft_spectrum(image_pil)
+        import random
+
+        # 在 __getitem__ 裡
+        if random.random() < 0.3:   # 30% 機率
+            fft_feature = torch.zeros_like(fft_feature)
 
         # RGB transform
         if self.transform:
@@ -106,6 +111,8 @@ print("-----------------------------------------------------")
 for epoch in range(EPOCHS):
     model.train()
     pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}")
+    total, correct = 0, 0
+
     for imgs, lbls in pbar:
         imgs, lbls = imgs.to(DEVICE), lbls.to(DEVICE)
         optimizer.zero_grad()
