@@ -42,7 +42,8 @@ class RVFDatasetFFT(Dataset):
         image_pil = transforms.Resize((224,224))(image_pil)
 
         # FFT
-        fft_feature = get_fft_spectrum(image_pil)
+        fft_feature = get_fft_spectrum(image_pil) * 0.3
+        
         import random
 
         # 在 __getitem__ 裡
@@ -130,6 +131,8 @@ for epoch in range(EPOCHS):
         pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{current_acc:.2f}%"})
 
 # --- 7. 驗證 ---
+print("-----------------------------------------------------")
+print("🚀 開始驗證模型效能 ...")
 model.eval()
 all_preds, all_labels = [], []
 
