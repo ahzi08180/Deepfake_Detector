@@ -103,7 +103,7 @@ optimizer = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
 criterion = nn.CrossEntropyLoss()
 
 # --- 6. 訓練迴圈 ---
-EPOCHS = 10
+EPOCHS = 3
 print(f"🚀 開始 EfficientNet-B0 + FFT 雙流訓練 on {DEVICE} ...")
 print(f"訓練資料數量: {len(train_loader.dataset)}，驗證資料數量: {len(valid_loader.dataset)}")
 print(f'每批次大小: {BATCH_SIZE}，總訓練回合數: {EPOCHS}')
